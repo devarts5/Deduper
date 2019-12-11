@@ -1,0 +1,218 @@
+#!/usr/bin/env python
+
+'''
+A program to remove PCR duplicates from a sam (aligmnet file).  If duplicates
+ that are not due to higher expression, but are, instead, artifacts of library
+ creation, such as PCR amplification, can be removed, a better understanding of
+  the expression levels of genetic elements can be achieved.
+
+The general strategy:  When Unique Molecular Identifiers (UMIs) have been added,
+ a PCR duplicate fragment read will have all of the following features, when
+ compared with a duplicated read.  These can be determined from the SAM file
+  and a list of UMIs.  Parsing through the reads, duplicates will be isolated.
+Duplicates will:
+be on the same strand.
+be on the same chromosome
+be at the same initial position, after accounting for soft clipping at the
+beginning in the read direction.
+have the same UMI.
+'''
+
+#Import necessary libraries
+import re
+import argparse
+import sys
+
+######Functions########
+# The following set the stand alone functions
+
+def getargs():
+'''Takes in user information, samfile, umi text file and wether paired-end, returns these as arguments, then variable'''
+	parser = argparse.ArgumentParser(description = 'input')
+	parser.add_argument('-f', '--samfile', type= str, required = True, help= "Enter -f or --samfile followed by your absolute SAM file path")
+	parser.add_argument('-p', '--paired', type= bool, help= "Enter 'paired_end' if your file is paired end, else enter nothing.")
+	parser.add_argument('-u', '--umi', type= str, help= "Enter your list of umis as a tsv file.")
+
+	return parser.parse_args()
+args = getargs()
+
+#Set variables for Arg items
+samfile = args.samfile
+paired = args.paired
+umi_file = args.umi
+
+# Prints error message and kills program if paired
+if paired == True:
+	print("Error this program does not accept Paired end reads. It is stopping without completion.")
+	sys.exit()
+
+#Unit Test for argparse - Run with and without paired end read specified.  Samfile should give the path
+#print(UMI)
+#print(samfile)
+
+def UMI_fxn(): #creates index list
+    ''' A function to make an UMI_list from arg parsed text file'''
+	with open (umi_file, "r") as fh: #-open every record.
+		UMI_list = []
+		for line in fh:
+			line = line.strip() #remove newlines
+			UMI_list.append(line) #adds barcode to Indices list
+	return(UMI_list)
+#Unit test - Print lists
+#UMI_list=UMI_fxn()
+#print(UMI_list)
+
+def Direction_Checker (flag):
+    '''Takes in one bitwise flag from sam alignment column 2, determines strand direction'''
+	if (int(flag) & 16) != 16:
+		strand = "minus"
+	else:
+		strand = "plus"
+	return strand
+#	print(strand)
+# Unit Test for Direction_Checker: Feed the following directions and print
+#direction = 16
+#direction = 2
+#Direction_Checker(direction)
+#print(strand)
+
+def UMI_Checker (column1):
+    '''A function to find the UMI of a read.'''
+	umi = re.findall(":[A,G,C,T,N]{8}", column1)[0].strip(":")
+	return umi
+
+# # #Unit Test- Feed the function thesetwo strings  and print the output.
+#column1 = "NS500451:154:HWKTMBGXX:1:11101:24260:1121:CTGTTCAC"
+#couln1 = "NS500451:154:HWKTMBGXX:1:11101:18996:1145:TTCGCCTA
+# These should be CTGTTCAC and TTCGCCTA.
+#UMI_Checker(column1)
+#print(UMI)
+
+def Plus_adjust_start (cigar,start):
+    '''Takes the cigar string from one forward read and its start position and returns an adjusted start position.'''
+	#start = 10
+	soft = re.findall(r'^[0-9]+S',cigar)
+	#print(soft)
+	start +=  start - int(soft[0].strip("S"))
+	return(start)
+
+# #Unit Test: Try the following cigar strings and start position.  Print start.
+# #	start = 1, cigar = 10M, adusted = 1
+# #	start = 2, cigar = 2S5M, adjusted = 0
+# #	start = 37, cigar = 1S3M7N4M, adjusted = 36
+#Plus_adjust_start("10S40M1I30M4S")
+#print(start)
+
+# # Minus_adjust_start A function to take the cigar string from one reverse read and its start position and find an adjusted start position.
+# # •	Grab start position number, set it as count
+# # •	Grab cigar string by column number
+# # •	In a loop Grep for each number- letter combination
+# # 	- If letter is S preceeded by a letter and a number, add the number preceding it to count.
+# #           This is because you want to add soft-clips at the end of the number chain/ start of the read  on reverse reads, but
+# # 	  not at the left-most position.
+# # 	- If letter is M, add the number preceding it to the count.
+# # 	- If letter is N add the number preceding it to the count.
+# # 	- If letter is D add the number preceding it to the count.
+# # 	- If letter is I ignore the number in front of it.
+# # Return - A number that is the adjusted start position.
+# # Unit Test - Try the following cigar strings and start position.  Print the count.
+# # 	start = 50, cigar = 5S10M20N10M5D5S adjusted = 100
+# # 	start = 0, cigar = 5M10N5M, adjusted = 20
+# # 	start = 0, cigar = 1S5M10N4M, adjusted = 20
+
+def Minus_adjust_start (cigar,start):
+	'''Minus_adjust_start A function to take the cigar string from one reverse read and its start position and find an adjusted start position.'''
+	rev = re.findall(r'[0-9]+\D',cigar)
+	for item in range(len(rev)):
+		if "M" in (rev[item]):
+			thing1 = str(rev[item])
+			thing2 = thing1.strip("M")
+			start += int(thing2)
+		elif "N" in (rev[item]):
+			thing1 = str(rev[item])
+			thing2 = thing1.strip("N")
+			start += int(thing2)
+		elif "D" in (rev[item]):
+			thing1 = str(rev[item])
+			thing2 = thing1.strip("D")
+			start += int(thing2)
+		elif "S" in (rev[item]):
+			if item >>0:
+				thing1 = str(rev[item])
+				thing2 = thing1.strip("S")
+				start += int(thing2)
+
+	return start
+#Unit Test Minus_adjust_start- Try the following cigar strings and start position.  Print the count.
+#  	start = 50, cigar = 5S10M20N10M5D5S adjusted = 100
+#  	start = 0, cigar = 5M10N5M, adjusted = 20
+# 	start = 0, cigar = 1S5M10N4M, adjusted = 20
+#Minus_adjust_start(cigar, start)
+
+##### The Main Code ######
+
+#Open the input SAM file
+# In order to get the columns for cigar strings, chromosomes and such, I'm,
+# splitting by tab , identifying the column by slice and naming each by it's
+# function.
+
+#create a new file for the deduplicated sam Samfile
+out_file = open("deduplicated.sam","w+")
+#create a dictionary to hold unique read identifiers for unduplicated reads.
+#This is to be wiped after each cromosome
+original_lines = {}
+prev_chrom = "Dude"
+UMI_list=UMI_fxn()
+unidentified_file = open("deduplicated","w+")
+
+with open (samfile) as fh:
+	for line in fh:
+		# put header lines in out file
+		if line[0] == "@":
+			out_file.write(line)
+		else:
+			#set a list to contain unique string identifiers
+			identifier = []
+			samline = fh.readline().split("\t")
+#			print(line)
+		#To get direction (sam column 2)
+			flag = samline[1]
+		#To get chromosome (sam column 3)
+			chrom = samline[2]
+		#To get cigar string (sam column 6)
+			cigar = samline[5]
+		#To get column 1 where UMI lies
+			column1 = samline[0]
+		#To get start column
+			start = samline[3]
+		#initialize dictionary to capture unique reads
+			out_file.write(line[0])
+
+#How to go to put the first line that is not header in the file?
+
+			#If chromosome is the same continue checking, else empty {}, start again
+			if chrom != prev_chrom:
+				original_lines = {}
+				prev_chrom = chrom
+
+			identifier += chrom
+			# How to check that UMI matches something in the umi_file?
+			UMI = UMI_Checker(column1)
+			if UMI not in UMI_list:
+				unidentified_file.write(line[0])
+			else:
+				identifier += UMI
+			strand =Direction_Checker(flag)
+			if strand == "+":
+				identifier += strand
+				start = Plus_adjust_start(cigar,start)
+				identifier += start
+			elif strand == "-":
+				identifier += strand
+				start = Minus_adjust_start(cigar,start)
+				identifier += start
+			identity_string = '-'.join(identifier)
+			if identity_string not in original_lines:
+				out_file.write(line)
+			else: #Does this work to make the line the value and the identity string the key"
+				original_lines[identity_string] = line
