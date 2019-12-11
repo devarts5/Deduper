@@ -163,7 +163,7 @@ out_file = open("deduplicated.sam","w+")
 original_lines = {}
 prev_chrom = "Dude"
 UMI_list=UMI_fxn()
-unidentified_file = open("deduplicated","w+")
+unidentified_file = open("unidentified.sam","w+")
 
 with open (samfile) as fh:
 	for line in fh:
@@ -188,15 +188,13 @@ with open (samfile) as fh:
 		#initialize dictionary to capture unique reads
 			out_file.write(line[0])
 
-#How to go to put the first line that is not header in the file?
-
 			#If chromosome is the same continue checking, else empty {}, start again
 			if chrom != prev_chrom:
 				original_lines = {}
 				prev_chrom = chrom
 
 			identifier += chrom
-			# How to check that UMI matches something in the umi_file?
+			# How to check that UMI matches something in the umi_file
 			UMI = UMI_Checker(column1)
 			if UMI not in UMI_list:
 				unidentified_file.write(line[0])
